@@ -1,0 +1,224 @@
+¿En qué consiste la detección YOLO?
+Vamos a hacer un detector de objetos en imágenes usando YOLO, un tipo de técnica muy novedosa (2016), acrónimo de “You Only Look Once” y que es la más rápida del momento, permitiendo su uso en video en tiempo real.
+Esta técnica utiliza un tipo de red Neuronal Convolucional llamada Darknet para la clasificación de imágenes y le añade la parte de la detección, es decir un “cuadradito” con las posiciones xey, alto y ancho del objeto encontrado.
+
+
+xml_dir = "annotation/lego/"
+img_dir = "images/lego/"
+labels = &#91;"lego"]
+tamanio = 416
+mejores_pesos = "red_lego.h5"
+ 
+def leer_annotations(ann_dir, img_dir, labels=&#91;]):
+    all_imgs = &#91;]
+    seen_labels = {}
+    
+    for ann in sorted(os.listdir(ann_dir)):
+        img = {'object':&#91;]}
+ 
+        tree = ET.parse(ann_dir + ann)
+        
+        for elem in tree.iter():
+            if 'filename' in elem.tag:
+                img&#91;'filename'] = img_dir + elem.text
+            if 'width' in elem.tag:
+                img&#91;'width'] = int(elem.text)
+            if 'height' in elem.tag:
+                img&#91;'height'] = int(elem.text)
+            if 'object' in elem.tag or 'part' in elem.tag:
+                obj = {}
+                
+                for attr in list(elem):
+                    if 'name' in attr.tag:
+                        obj&#91;'name'] = attr.text
+ 
+                        if obj&#91;'name'] in seen_labels:
+                            seen_labels&#91;obj&#91;'name']] += 1
+                        else:
+                            seen_labels&#91;obj&#91;'name']] = 1
+                        
+                        if len(labels) &gt; 0 and obj&#91;'name'] not in labels:
+                            break
+                        else:
+                            img&#91;'object'] += &#91;obj]
+                            
+                    if 'bndbox' in attr.tag:
+                        for dim in list(attr):
+                            if 'xmin' in dim.tag:
+                                obj&#91;'xmin'] = int(round(float(dim.text)))
+                            if 'ymin' in dim.tag:
+                                obj&#91;'ymin'] = int(round(float(dim.text)))
+                            if 'xmax' in dim.tag:
+                                obj&#91;'xmax'] = int(round(float(dim.text)))
+                            if 'ymax' in dim.tag:
+                                obj&#91;'ymax'] = int(round(float(dim.text)))
+ 
+        if len(img&#91;'object']) &gt; 0:
+            all_imgs += &#91;img]
+                        
+    return all_imgs, seen_labels
+ 
+train_imgs, train_labels = leer_annotations(xml_dir, img_dir, labels)
+print('imagenes',len(train_imgs), 'labels',len(train_labels))
+
+train_valid_split = int(0.8*len(train_imgs))
+np.random.shuffle(train_imgs)
+valid_imgs = train_imgs&#91;train_valid_split:]
+train_imgs = train_imgs&#91;:train_valid_split]
+print('train:',len(train_imgs), 'validate:',len(valid_imgs))
+
+### FRAGMENTO del código
+ 
+iaa.OneOf(&#91;
+    iaa.GaussianBlur((0, 3.0)), # blur images
+    iaa.AverageBlur(k=(2, 7)), # blur image using local means with kernel
+    iaa.MedianBlur(k=(3, 11)), # blur image using local medians with kernel
+    ]),
+    iaa.Sharpen(alpha=(0, 1.0), lightness=(0.75, 1.5)), # sharpen images
+    iaa.AdditiveGaussianNoise(loc=0, scale=(0.0, 0.05*255), per_channel=0.5), # add gaussian noise to images
+    iaa.OneOf(&#91;
+        iaa.Dropout((0.01, 0.1), per_channel=0.5), # randomly remove up to 10% of the pixels
+        ]),
+    iaa.Add((-10, 10), per_channel=0.5), # change brightness of images
+    iaa.Multiply((0.5, 1.5), per_channel=0.5), # change brightness of images
+    iaa.ContrastNormalization((0.5, 2.0), per_channel=0.5), # improve or worsen the contrast
+   
+   
+#### FRAGMENTO de código, solo algunas capas de ejemplo
+ 
+# Layer 1
+x = Conv2D(32, (3,3), strides=(1,1), padding='same', name='conv_1', use_bias=False)(input_image)
+x = BatchNormalization(name='norm_1')(x)
+x = LeakyReLU(alpha=0.1)(x)
+x = MaxPooling2D(pool_size=(2, 2))(x)
+ 
+# Layer 2
+x = Conv2D(64, (3,3), strides=(1,1), padding='same', name='conv_2', use_bias=False)(x)
+x = BatchNormalization(name='norm_2')(x)
+x = LeakyReLU(alpha=0.1)(x)
+x = MaxPooling2D(pool_size=(2, 2))(x)
+ 
+# Layer 3
+x = Conv2D(128, (3,3), strides=(1,1), padding='same', name='conv_3', use_bias=False)(x)
+x = BatchNormalization(name='norm_3')(x)
+x = LeakyReLU(alpha=0.1)(x)
+
+
+### Fragmento de código
+ 
+        input_image     = Input(shape=(self.input_size, self.input_size, 3))
+        self.true_boxes = Input(shape=(1, 1, 1, max_box_per_image , 4))  
+ 
+        self.feature_extractor = FullYoloFeature(self.input_size)
+ 
+        print(self.feature_extractor.get_output_shape())    
+        self.grid_h, self.grid_w = self.feature_extractor.get_output_shape()        
+        features = self.feature_extractor.extract(input_image)            
+ 
+        # make the object detection layer
+        output = Conv2D(self.nb_box * (4 + 1 + self.nb_class), 
+                        (1,1), strides=(1,1), 
+                        padding='same', 
+                        name='DetectionLayer', 
+                        kernel_initializer='lecun_normal')(features)
+        output = Reshape((self.grid_h, self.grid_w, self.nb_box, 4 + 1 + self.nb_class))(output)
+        output = Lambda(lambda args: args&#91;0])(&#91;output, self.true_boxes])
+ 
+        self.model = Model(&#91;input_image, self.true_boxes], output)
+        
+        
+yolo = YOLO(input_size          = tamanio, 
+            labels              = labels, 
+            max_box_per_image   = 5,
+            anchors             = anchors)
+            
+            
+           
+           
+ def draw_boxes(image, boxes, labels):
+    image_h, image_w, _ = image.shape
+ 
+    for box in boxes:
+        xmin = int(box.xmin*image_w)
+        ymin = int(box.ymin*image_h)
+        xmax = int(box.xmax*image_w)
+        ymax = int(box.ymax*image_h)
+ 
+        cv2.rectangle(image, (xmin,ymin), (xmax,ymax), (0,255,0), 3)
+        cv2.putText(image, 
+                    labels&#91;box.get_label()] + ' ' + str(box.get_score()), 
+                    (xmin, ymin - 13), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 
+                    1e-3 * image_h, 
+                    (0,255,0), 2)
+        
+    return image  
+    
+    
+    
+ mejores_pesos = "red_lego.h5"
+image_path = "images/test/lego_girl.png"
+ 
+mi_yolo = YOLO(input_size          = tamanio, 
+            labels              = labels, 
+            max_box_per_image   = 5,
+            anchors             = anchors)
+ 
+mi_yolo.load_weights(mejores_pesos)
+ 
+image = cv2.imread(image_path)
+boxes = mi_yolo.predict(image)
+image = draw_boxes(image, boxes, labels)
+ 
+print('Detectados', len(boxes))
+ 
+cv2.imwrite(image_path&#91;:-4] + '_detected' + image_path&#91;-4:], image)
+
+
+from tqdm import *
+ 
+video_path = 'lego_movie.mp4'
+video_out = video_path&#91;:-4] + '_detected' + video_path&#91;-4:]
+video_reader = cv2.VideoCapture(video_path)
+ 
+nb_frames = int(video_reader.get(cv2.CAP_PROP_FRAME_COUNT))
+frame_h = int(video_reader.get(cv2.CAP_PROP_FRAME_HEIGHT))
+frame_w = int(video_reader.get(cv2.CAP_PROP_FRAME_WIDTH))
+ 
+video_writer = cv2.VideoWriter(video_out,
+                       cv2.VideoWriter_fourcc(*'MPEG'), 
+                       50.0, 
+                       (frame_w, frame_h))
+ 
+for i in tqdm(range(nb_frames)):
+    _, image = video_reader.read()
+    
+    boxes = yolo.predict(image)
+    image = draw_boxes(image, boxes, labels)
+ 
+    video_writer.write(np.uint8(image))
+ 
+video_reader.release()
+video_writer.release() 
+
+win_name = 'Lego detection'
+cv2.namedWindow(win_name)
+ 
+video_reader = cv2.VideoCapture(0)
+ 
+while True:
+    _, image = video_reader.read()
+    
+    boxes = yolo.predict(image)
+    image = draw_boxes(image, boxes, labels)
+ 
+    cv2.imshow(win_name, image)
+ 
+    key = cv2.waitKey(1) &amp; 0xFF
+    if key == ord('q'):
+        break
+ 
+cv2.destroyAllWindows()
+video_reader.release()
+
+
